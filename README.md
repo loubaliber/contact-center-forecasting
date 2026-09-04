@@ -25,3 +25,16 @@ jupyter notebook Forecasting_Notebook_Baliber.ipynb
 ## Data
 
 `generate_synthetic_data.py` writes `data/calls_intraday.csv` (half-hourly, 3 years, ~52.5k rows) and `data/calls.csv` (its daily aggregate, used by the dashboard).
+
+## Notebook highlights
+
+Figures exported from `Forecasting_Notebook_Baliber.ipynb` (see `plots/`):
+
+| | |
+|---|---|
+| ![Data completeness](plots/10_loading_the_data.png) | ![3-year series](plots/15_visualizing_the_full_3_year_series.png) |
+| ![One week, intraday + weekly pattern](plots/18_zooming_into_one_week_intraday_weekly_pa.png) | ![Average calls by hour of day](plots/21_average_shape_by_hour_of_day_and_day_of_.png) |
+| ![Average calls by day of week](plots/23_average_shape_by_hour_of_day_and_day_of_.png) | ![AHT vs. call load](plots/26_does_handle_time_really_drop_under_load.png) |
+| ![Weekly decomposition](plots/30_weekly_decomposition_daily_series.png) | ![Intraday decomposition](plots/33_intraday_decomposition_daily_cycle_withi.png) |
+| ![Autocorrelation](plots/36_autocorrelation_how_much_does_the_past_p.png) | ![Seasonal Naive vs. SES vs. Holt-Winters](plots/56_visual_comparison_seasonal_naive_vs_ses_.png) |
+| ![Walk-forward backtest](plots/66_walk_forward_validation_rolling_origin_b.png) | ![Erlang C staffing](plots/73_5_from_forecast_to_staffing_the_erlang_c.png) |
