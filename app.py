@@ -20,7 +20,6 @@ from statsmodels.tsa.holtwinters import ExponentialSmoothing
 st.set_page_config(page_title="Contact Center Forecast", layout="wide")
 
 METHODS = ["Seasonal Naive", "Holt-Winters"]
-BACKTEST_HORIZON = 14
 BACKTEST_FOLDS = 5
 DEFAULT_HOURLY_WAGE = 22.0
 
@@ -47,9 +46,23 @@ def holt_winters_forecast(history: pd.Series, horizon: int) -> np.ndarray:
 FORECASTERS = {"Seasonal Naive": naive_forecast, "Holt-Winters": holt_winters_forecast}
 
 
+def _score_fold(train: pd.Series, test: pd.Series, horizon: int) -> list[dict]:
+    rows = []
+    for name, forecaster in FORECASTERS.items():
+        pred = forecaster(train, horizon)
+        rows.append(
+            {
+                "method": name,
+                "mae": mean_absolute_error(test, pred),
+                "mape": mean_absolute_percentage_error(test, pred) * 100,
+            }
+        )
+    return rows
+
+
 @st.cache_data
 def backtest(history: pd.Series, horizon: int, n_folds: int) -> tuple[pd.DataFrame, int]:
-    """Walk-forward backtest: MAE/MAPE per method, averaged over n_folds folds."""
+    """Walk-forward backtest: MAE/MAPE per method, averaged over n_folds folds of `horizon` days each."""
     rows = []
     folds_used = 0
     for fold in range(n_folds):
@@ -57,18 +70,22 @@ def backtest(history: pd.Series, horizon: int, n_folds: int) -> tuple[pd.DataFra
         if cut < horizon * 4:
             break
         train, test = history.iloc[:cut], history.iloc[cut:cut + horizon]
-        for name, forecaster in FORECASTERS.items():
-            pred = forecaster(train, horizon)
-            rows.append(
-                {
-                    "method": name,
-                    "mae": mean_absolute_error(test, pred),
-                    "mape": mean_absolute_percentage_error(test, pred) * 100,
-                }
-            )
+        rows.extend(_score_fold(train, test, horizon))
         folds_used += 1
+
+    if not rows:
+        # Not enough history for a full walk-forward run — fall back to one split.
+        train, test = history.iloc[:-horizon], history.iloc[-horizon:]
+        rows.extend(_score_fold(train, test, horizon))
+        folds_used = 1
+
     summary = pd.DataFrame(rows).groupby("method")[["mae", "mape"]].mean()
     return summary, folds_used
+
+
+@st.cache_data
+def compute_forecast(history: pd.Series, horizon: int, method: str) -> np.ndarray:
+    return FORECASTERS[method](history, horizon)
 
 
 def erlang_c_service_level(n: int, calls_per_interval: float, aht_seconds: float,
@@ -118,25 +135,31 @@ st.caption(
 # ---------------------------------------------------------------------------
 # Controls
 # ---------------------------------------------------------------------------
-c1, c2 = st.columns(2)
+c1, c2, c3 = st.columns(3)
 with c1:
     horizon = st.slider("Forecast horizon (days)", 7, 60, 14)
 with c2:
     target_sl = st.slider("Target service level", 0.5, 0.95, 0.80, step=0.05)
+with c3:
+    hourly_wage = st.number_input("Hourly wage per agent ($)", min_value=1.0, value=DEFAULT_HOURLY_WAGE, step=1.0)
 
 # ---------------------------------------------------------------------------
 # Backtest-driven verdict
 # ---------------------------------------------------------------------------
-scores, folds_used = backtest(history, BACKTEST_HORIZON, BACKTEST_FOLDS)
-winner = scores["mae"].idxmin()
-runner_up = [m for m in METHODS if m != winner][0]
+# Backtest at the horizon actually being forecast, not a fixed window — a
+# method that wins at 14 days out isn't guaranteed to win at 60.
+scores, folds_used = backtest(history, horizon, BACKTEST_FOLDS)
+ranked = scores.sort_values("mae").index
+winner, runner_up = ranked[0], ranked[1]
+mae_gap_pct = abs(scores.loc[winner, "mae"] - scores.loc[runner_up, "mae"]) / scores.loc[runner_up, "mae"]
+is_close_call = mae_gap_pct < 0.03
 
-winner_forecast = FORECASTERS[winner](history, horizon)
-runner_up_forecast = FORECASTERS[runner_up](history, horizon)
+winner_forecast = compute_forecast(history, horizon, winner)
+runner_up_forecast = compute_forecast(history, horizon, runner_up)
 
 agents_winner = agents_for_forecast(winner_forecast, avg_aht, target_sl)
 agents_runner_up = agents_for_forecast(runner_up_forecast, avg_aht, target_sl)
-cost_delta_per_hour = (agents_runner_up - agents_winner) * DEFAULT_HOURLY_WAGE
+cost_delta_per_hour = (agents_runner_up - agents_winner) * hourly_wage
 
 if cost_delta_per_hour == 0:
     cost_sentence = (
@@ -151,14 +174,17 @@ else:
         f"Staffing off {runner_up}'s forecast instead would cost "
         f"**\\${abs(cost_delta_per_hour):,.0f}/hr {'more' if cost_delta_per_hour > 0 else 'less'}** "
         f"at the same {target_sl:.0%} target service level "
-        f"(assumes \\${DEFAULT_HOURLY_WAGE:.0f}/hr per agent)."
+        f"(at \\${hourly_wage:.0f}/hr per agent)."
     )
 
+verdict_verb = "is roughly tied with" if is_close_call else "beats"
 st.success(
-    f"**{winner} beats {runner_up}** in backtesting — "
+    f"**{winner} {verdict_verb} {runner_up}** in backtesting — "
     f"{scores.loc[winner, 'mae']:.0f} vs {scores.loc[runner_up, 'mae']:.0f} calls/day "
     f"average error (MAE, lower is better), averaged over the last {folds_used} "
-    f"backtest windows of {BACKTEST_HORIZON} days each. {cost_sentence}"
+    f"backtest windows of {horizon} days each"
+    f"{' (within 3% — treat this as a close call, not a landslide)' if is_close_call else ''}. "
+    f"{cost_sentence}"
 )
 
 method = st.radio(
@@ -208,7 +234,7 @@ st.subheader("Backtest error, head to head")
 st.caption(
     f"MAE (Mean Absolute Error, in calls/day) and MAPE (Mean Absolute Percentage Error) "
     f"from {folds_used}-fold walk-forward backtesting — each fold trains on the past and "
-    f"tests on a {BACKTEST_HORIZON}-day window it never saw."
+    f"tests on a {horizon}-day window it never saw."
 )
 display_scores = scores.rename(index=lambda m: f"{m} (recommended)" if m == winner else f"{m} (runner-up)")
 st.dataframe(
@@ -226,27 +252,24 @@ st.caption(
 )
 
 agents_needed = agents_winner if method == winner else agents_runner_up
+avg_forecast_calls = float(np.mean(forecast_values))
+calls_per_hour = avg_forecast_calls / 24
 
 m1, m2, m3 = st.columns(3)
-m1.metric("Avg. forecasted calls/day", f"{float(np.mean(forecast_values)):,.0f}")
+m1.metric("Avg. forecasted calls/day", f"{avg_forecast_calls:,.0f}")
 m2.metric("Avg. handle time (last 30d)", f"{avg_aht:,.0f}s")
 m3.metric(f"Agents needed ({method})", agents_needed)
 
 st.subheader("What-if: staff a different number of agents")
 st.caption(
     "Override the recommended headcount and see the resulting service level and hourly cost, "
-    "instead of only the number Erlang C says you need."
+    "instead of only the number Erlang C says you need. Uses the hourly wage set above."
 )
 
-wcol1, wcol2 = st.columns(2)
-with wcol1:
-    what_if_agents = st.number_input(
-        "Agents to staff", min_value=1, max_value=200, value=agents_needed, step=1
-    )
-with wcol2:
-    hourly_wage = st.number_input("Hourly wage per agent ($)", min_value=1.0, value=DEFAULT_HOURLY_WAGE, step=1.0)
+what_if_agents = st.number_input(
+    "Agents to staff", min_value=1, max_value=200, value=agents_needed, step=1
+)
 
-calls_per_hour = float(np.mean(forecast_values)) / 24
 what_if_sl = erlang_c_service_level(
     n=int(what_if_agents),
     calls_per_interval=calls_per_hour,
