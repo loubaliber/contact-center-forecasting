@@ -8,3 +8,4 @@ missingno
 matplotlib
 jupyter
 ipykernel
+kaleido
