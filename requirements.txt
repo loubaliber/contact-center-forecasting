@@ -1,0 +1,10 @@
+streamlit
+pandas
+numpy
+statsmodels
+plotly
+scikit-learn
+missingno
+matplotlib
+jupyter
+ipykernel
