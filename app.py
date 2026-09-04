@@ -31,21 +31,28 @@ def holt_winters_forecast(history: pd.Series, horizon: int) -> np.ndarray:
     return model.forecast(horizon).to_numpy()
 
 
+def erlang_c_service_level(n: int, calls_per_interval: float, aht_seconds: float,
+                            interval_seconds: int, target_answer_seconds: int) -> float:
+    """Service level (share of calls answered within target_answer_seconds) for n agents."""
+    a = (calls_per_interval * aht_seconds) / interval_seconds  # traffic intensity, erlangs
+    if n <= a:
+        return 0.0
+    erlang_b = 1.0
+    for i in range(1, n + 1):
+        erlang_b = (a * erlang_b) / (i + a * erlang_b)
+    p_wait = (n * erlang_b) / (n - a * (1 - erlang_b))
+    if p_wait <= 0:
+        return 1.0
+    return 1 - p_wait * math.exp(-(n - a) * (target_answer_seconds / aht_seconds))
+
+
 def erlang_c_agents(calls_per_interval: float, aht_seconds: float, interval_seconds: int,
                      target_sl: float, target_answer_seconds: int) -> int:
     """Minimum agents to hit target service level, via Erlang C."""
     traffic_intensity = (calls_per_interval * aht_seconds) / interval_seconds  # erlangs
     n = max(1, math.ceil(traffic_intensity))
     while n < 200:
-        a = traffic_intensity
-        erlang_b = 1.0
-        for i in range(1, n + 1):
-            erlang_b = (a * erlang_b) / (i + a * erlang_b)
-        p_wait = (n * erlang_b) / (n - a * (1 - erlang_b))
-        if p_wait <= 0 or n <= a:
-            n += 1
-            continue
-        sl = 1 - p_wait * math.exp(-(n - a) * (target_answer_seconds / aht_seconds))
+        sl = erlang_c_service_level(n, calls_per_interval, aht_seconds, interval_seconds, target_answer_seconds)
         if sl >= target_sl:
             return n
         n += 1
@@ -134,6 +141,36 @@ st.caption(
     "Delta shown is agents needed under this method vs. the naive last-week-pattern method — "
     "negative means this method avoids overstaffing relative to naive."
 )
+
+st.subheader("What-if: staff a different number of agents")
+st.caption(
+    "Override the recommended headcount and see the resulting service level and hourly cost, "
+    "instead of only the number Erlang C says you need."
+)
+
+wcol1, wcol2 = st.columns(2)
+with wcol1:
+    what_if_agents = st.number_input(
+        "Agents to staff", min_value=1, max_value=200, value=agents_needed, step=1
+    )
+with wcol2:
+    hourly_wage = st.number_input("Hourly wage per agent ($)", min_value=1.0, value=22.0, step=1.0)
+
+what_if_sl = erlang_c_service_level(
+    n=int(what_if_agents),
+    calls_per_interval=calls_per_hour,
+    aht_seconds=avg_aht,
+    interval_seconds=3600,
+    target_answer_seconds=20,
+)
+
+w1, w2, w3 = st.columns(3)
+w1.metric("Resulting service level", f"{what_if_sl:.0%}",
+          delta=f"{(what_if_sl - target_sl):+.0%} vs. target", delta_color="normal")
+w2.metric("Hourly staffing cost", f"${what_if_agents * hourly_wage:,.0f}/hr")
+w3.metric("Cost vs. recommended headcount",
+          f"${(what_if_agents - agents_needed) * hourly_wage:,.0f}/hr",
+          delta_color="inverse")
 
 with st.expander("Show raw data"):
     st.dataframe(df.tail(30), width="stretch")
