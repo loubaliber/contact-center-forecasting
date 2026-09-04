@@ -18,7 +18,7 @@ jupyter notebook Forecasting_Notebook_Baliber.ipynb
 
 ## What it shows
 
-**Dashboard (`app.py`)** — synthetic daily call volume + AHT (Average Handle Time) for one queue, with weekly/yearly seasonality, trend, and injected spike days. Two forecasting methods, toggleable: a naive last-week-pattern baseline and Holt-Winters exponential smoothing (trend + seasonality). An Erlang C staffing calculation converts the forecast into "agents needed" at a chosen target service level, compared against the naive method's staffing implication.
+**Dashboard (`app.py`)** — synthetic daily call volume + AHT (Average Handle Time) for one queue, with weekly/yearly seasonality, trend, and injected spike days. Runs a live 5-fold walk-forward backtest (Seasonal Naive vs. Holt-Winters) on every load and recommends whichever method has the lower backtest error, instead of a neutral toggle — the method selector still lets you inspect the runner-up. Shows the head-to-head MAE/MAPE, an Erlang C staffing estimate with a cost comparison between what each method would imply, a what-if slider to override the recommended headcount, and one-line callouts for the AHT-under-load correlation and the injected spike days (which no forecasting method here could have predicted from history alone).
 
 **Notebook (`Forecasting_Notebook_Baliber.ipynb`)** — a from-first-principles walkthrough at half-hourly granularity, 3 years of synthetic history: dataset exploration, time series decomposition (trend/seasonality/residual, autocorrelation, stationarity), three forecasting methods (seasonal naive, simple exponential smoothing, Holt-Winters) compared with error metrics and walk-forward backtesting, the Erlang C formula derived step by step, and a cost comparison between staffing plans.
 
